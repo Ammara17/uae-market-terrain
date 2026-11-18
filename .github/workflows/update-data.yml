@@ -1,0 +1,42 @@
+name: Update market data
+
+# Refreshes data/stocks.json with real DFM and ADX closes from Yahoo Finance.
+# Runs on weekdays after the UAE close (15:00 Gulf Standard Time = 11:00 UTC),
+# and on demand from the Actions tab ("Run workflow").
+on:
+  schedule:
+    - cron: "37 11 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-market-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download prices
+        run: python scripts/fetch_data.py
+
+      - name: Commit updated data
+        run: |
+          if git diff --quiet -- data/stocks.json; then
+            echo "Data unchanged."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/stocks.json
+          git commit -m "Update UAE market data ($(date -u +%Y-%m-%d))"
+          git push

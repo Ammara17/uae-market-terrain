@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>UAE Market Terrain</title>
+  <meta name="description" content="Interactive 3D dashboard of price trends for stocks listed on the Dubai Financial Market (DFM) and Abu Dhabi Securities Exchange (ADX).">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@500&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&family=Unbounded:wght@500;700&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="page">
+    <header class="masthead">
+      <div class="brand">
+        <p class="eyebrow">DFM · ADX · Daily closes in AED</p>
+        <h1 class="wordmark">UAE Market <span>Terrain</span></h1>
+        <p class="arabic" lang="ar" dir="rtl">اتجاهات أسهم سوقي دبي وأبوظبي</p>
+      </div>
+      <div class="mast-meta">
+        <span class="source-badge" id="source-badge">Loading data</span>
+        <p class="asof" id="asof"></p>
+        <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17z" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <p class="notice" id="demo-notice" hidden>
+      <strong>Demo data.</strong>
+      <span>These prices are simulated so the dashboard works offline. Run the <em>Update market data</em> workflow, or <code>python scripts/fetch_data.py</code>, to load real DFM and ADX closes.</span>
+    </p>
+
+    <section class="filters" aria-label="Filters">
+      <div class="field">
+        <span class="field-label" id="lbl-range">Period</span>
+        <div class="seg" role="group" aria-labelledby="lbl-range" id="range-group"></div>
+      </div>
+      <div class="field">
+        <span class="field-label" id="lbl-exchange">Exchange</span>
+        <div class="seg" role="group" aria-labelledby="lbl-exchange" id="exchange-group">
+          <button type="button" data-exchange="ALL">All</button>
+          <button type="button" data-exchange="DFM">DFM · Dubai</button>
+          <button type="button" data-exchange="ADX">ADX · Abu Dhabi</button>
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label" for="sector-select">Sector</label>
+        <select id="sector-select"></select>
+      </div>
+      <div class="field field-grow">
+        <label class="field-label" for="search">Find a stock</label>
+        <input id="search" type="search" placeholder="Ticker, company or sector, e.g. EMAAR" autocomplete="off">
+      </div>
+    </section>
+
+    <section class="summary" aria-label="Market summary">
+      <div class="tile">
+        <span class="tile-label">Equal-weight basket</span>
+        <div class="tile-row">
+          <span class="tile-value" id="sum-basket">—</span>
+          <span id="sum-basket-spark"></span>
+        </div>
+        <span class="tile-sub" id="sum-basket-sub"></span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Breadth</span>
+        <span class="tile-value" id="sum-breadth">—</span>
+        <div class="breadth-bar" id="sum-breadth-bar" aria-hidden="true"></div>
+        <span class="tile-sub" id="sum-breadth-sub"></span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Top gainer</span>
+        <button class="tile-link" type="button" id="sum-top">
+          <span class="tile-value" id="sum-top-value">—</span>
+          <span class="tile-sub" id="sum-top-sub"></span>
+        </button>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Top decliner</span>
+        <button class="tile-link" type="button" id="sum-bottom">
+          <span class="tile-value" id="sum-bottom-value">—</span>
+          <span class="tile-sub" id="sum-bottom-sub"></span>
+        </button>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <div class="stage" id="stage">
+        <div class="stage-bar">
+          <div class="seg" role="group" aria-label="3D view" id="view-group">
+            <button type="button" data-view="ribbons">Trend ribbons</button>
+            <button type="button" data-view="towers">Return towers</button>
+          </div>
+          <div class="legend" aria-hidden="true">
+            <span class="legend-title" id="legend-title">Change since period start</span>
+            <div class="legend-ramp"></div>
+            <div class="legend-scale"><span id="legend-min"></span><span>0%</span><span id="legend-max"></span></div>
+          </div>
+        </div>
+        <div class="canvas-host" id="canvas-host"></div>
+        <div class="stage-empty" id="stage-empty" hidden></div>
+        <div class="stage-foot">
+          <span class="hint" id="stage-hint">Drag to orbit · Scroll or pinch to zoom · Click a stock to inspect</span>
+          <button class="ghost-btn" type="button" id="reset-view">Reset view</button>
+        </div>
+        <div class="tooltip" id="tooltip" hidden></div>
+      </div>
+
+      <aside class="detail" id="detail" aria-label="Selected stock">
+        <div class="detail-head">
+          <div class="detail-id">
+            <span class="ticker" id="d-ticker">—</span>
+            <span class="chip" id="d-exchange"></span>
+            <span class="d-sector" id="d-sector"></span>
+          </div>
+          <h2 class="d-name" id="d-name">Select a stock</h2>
+        </div>
+        <div class="readout" aria-live="polite">
+          <span class="readout-label" id="r-label"></span>
+          <div class="readout-row">
+            <span class="readout-price" id="r-price"></span>
+            <span class="delta" id="r-delta"></span>
+          </div>
+          <span class="readout-extra" id="r-extra"></span>
+        </div>
+        <div class="chart" id="d-chart"></div>
+        <dl class="stats" id="d-stats"></dl>
+        <p class="trend-note">
+          <span class="pill" id="d-trend">—</span>
+          <span id="d-trend-text"></span>
+        </p>
+      </aside>
+    </section>
+
+    <section class="board" aria-labelledby="board-title">
+      <header class="board-head">
+        <h2 id="board-title">Every stock, one trend each</h2>
+        <p id="board-count"></p>
+      </header>
+      <div class="table-wrap">
+        <table id="board-table">
+          <thead>
+            <tr>
+              <th scope="col" data-sort="symbol"><button type="button">Stock</button></th>
+              <th scope="col" data-sort="name"><button type="button">Company</button></th>
+              <th scope="col" class="num" data-sort="last"><button type="button">Last (AED)</button></th>
+              <th scope="col" class="num" data-sort="change"><button type="button">Change</button></th>
+              <th scope="col">Trend</th>
+              <th scope="col" class="num" data-sort="day"><button type="button">Day</button></th>
+              <th scope="col" class="num">Period low – high</th>
+              <th scope="col" class="num" data-sort="volume"><button type="button">Avg volume</button></th>
+              <th scope="col" data-sort="trend"><button type="button">Signal</button></th>
+            </tr>
+          </thead>
+          <tbody id="board-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="site-foot" id="foot">
+      <p id="foot-source"></p>
+      <p>UAE markets trade Monday to Friday, 10:00–15:00 Gulf Standard Time (UTC+4). Trend signals compare the latest close with its 20- and 50-day averages. For information only, not investment advice.</p>
+    </footer>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
