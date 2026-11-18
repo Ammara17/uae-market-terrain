@@ -58,9 +58,58 @@ def load_universe() -> list[dict]:
 # Live data
 # --------------------------------------------------------------------------
 
-def fetch_yahoo(yahoo_symbol: str, history: str, retries: int = 3) -> dict[str, tuple[float, int]]:
+try:  # yfinance mimics a real browser session, which Yahoo blocks far less often
+    import yfinance as yf  # type: ignore[import-not-found]
+except ImportError:  # the plain standard-library path below still works locally
+    yf = None
+
+
+def fetch_yahoo(yahoo_symbol: str, history: str) -> dict[str, tuple[float, int]]:
     """Return {YYYY-MM-DD: (close, volume)} for one symbol, keyed by UAE trading day."""
-    query = urllib.parse.urlencode({"range": history, "interval": "1d", "includePrePost": "false"})
+    if yf is not None:
+        return fetch_yahoo_yf(yahoo_symbol, history)
+    return fetch_yahoo_http(yahoo_symbol, history)
+
+
+def yf_options(history: str) -> dict:
+    """History options, asking yfinance to raise errors instead of printing them."""
+    options = {"period": history, "interval": "1d", "auto_adjust": False, "actions": False}
+    debug = getattr(getattr(yf, "config", None), "debug", None)
+    if debug is not None and hasattr(debug, "hide_exceptions"):
+        debug.hide_exceptions = False  # yfinance 1.x
+    else:
+        options["raise_errors"] = True  # older yfinance
+    return options
+
+
+def fetch_yahoo_yf(yahoo_symbol: str, history: str, retries: int = 3) -> dict[str, tuple[float, int]]:
+    frame = None
+    for attempt in range(retries):
+        try:
+            frame = yf.Ticker(yahoo_symbol).history(**yf_options(history))
+            break
+        except Exception:  # noqa: BLE001 - rate limits and timeouts are worth a retry
+            if attempt == retries - 1:
+                raise
+            time.sleep(3 * (attempt + 1))
+
+    rows: dict[str, tuple[float, int]] = {}
+    if frame is not None and not frame.empty:
+        index = frame.index
+        if getattr(index, "tz", None) is not None:
+            index = index.tz_convert("Asia/Dubai")
+        for stamp, close, volume in zip(index, frame["Close"], frame["Volume"]):
+            if close is None or not math.isfinite(float(close)) or close <= 0:
+                continue
+            vol = 0 if volume is None or not math.isfinite(float(volume)) else int(volume)
+            rows[stamp.date().isoformat()] = (round(float(close), 4), vol)
+    if len(rows) < 5:
+        raise ValueError(f"only {len(rows)} usable rows")
+    return rows
+
+
+def fetch_yahoo_http(yahoo_symbol: str, history: str, retries: int = 3) -> dict[str, tuple[float, int]]:
+    query =urllib.parse.urlencode({"range": history, "interval": "1d", "includePrePost": "false"})
     url = YAHOO_URL.format(symbol=urllib.parse.quote(yahoo_symbol), query=query)
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
 
@@ -113,8 +162,8 @@ def build_live(universe: list[dict], history: str) -> dict:
             print(f"  skip  {stock['yahoo']:<16} {err}", file=sys.stderr)
             if not fetched and len(skipped) >= 5:
                 raise SystemExit(
-                    "The first five symbols all failed, so Yahoo Finance looks unreachable. "
-                    "Leaving the existing data file untouched."
+                    "The first five symbols all failed, so Yahoo Finance looks unreachable "
+                    f"(last error: {err}). Leaving the existing data file untouched."
                 )
         time.sleep(0.35)  # be polite to the endpoint
 

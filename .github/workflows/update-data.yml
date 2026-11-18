@@ -26,6 +26,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install yfinance
+        run: python -m pip install --quiet yfinance
+
       - name: Download prices
         run: python scripts/fetch_data.py
 
